@@ -1,0 +1,29 @@
+version: '3'
+
+services:
+  node1:
+    build: .
+    hostname: node1
+    environment:
+      - ADDR=0.0.0.0:8899
+      - NODES=${LOCAL_IP}:8899,${LOCAL_IP}:8898,${LOCAL_IP}:8897
+    ports:
+      - 8899:8899
+
+  node2:
+    build: .
+    hostname: node2
+    environment:
+      - ADDR=0.0.0.0:8899
+      - NODES=${LOCAL_IP}:8899,${LOCAL_IP}:8898,${LOCAL_IP}:8897
+    ports:
+      - 8898:8899
+
+  node3:
+    build: .
+    hostname: node3
+    environment:
+      - ADDR=0.0.0.0:8899
+      - NODES=${LOCAL_IP}:8899,${LOCAL_IP}:8898,${LOCAL_IP}:8897
+    ports:
+      - 8897:8899

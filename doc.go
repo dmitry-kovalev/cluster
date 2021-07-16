@@ -1,5 +1,5 @@
 /*
-Package dinghy is a leader election mechanism that follows
+Package cluster is a leader election mechanism that follows
 the raft protocol https://raft.github.io/ using http as the transport,
 up until the use of replicated log. For a more complete raft implementation
 use https://godoc.org/github.com/coreos/etcd/raft or https://github.com/hashicorp/raft
@@ -30,4 +30,4 @@ have two votes with no more available for the term and no majority. A new electi
 and finally a candidate will become a LEADER. This scenario can happen with an even number of
 nodes.
 */
-package dinghy
+package cluster

@@ -1,4 +1,4 @@
-package dinghy
+package cluster
 
 import (
 	"encoding/json"
@@ -8,9 +8,9 @@ import (
 
 const (
 	// UnknownLeaderID is set when a new election is in progress.
-	UnknownLeaderID = 0
+	UnknownLeaderID = uint32(0)
 	// NoVote is set to represent the node has not voted.
-	NoVote = 0
+	NoVote = uint32(0)
 	// StateCandidate represents the raft candidate state
 	StateCandidate = iota
 	// StateFollower represents the raft follower state
@@ -25,16 +25,16 @@ var (
 	// add that 1500 to give a result between 1500 and 3000
 	DefaultElectionTickRange = 4000
 	// DefaultHeartbeatTickRange will set the range of numbers for the heartbeat timeout.
-	DefaultHeartbeatTickRange = 2000
+	DefaultHeartbeatTickRange = 1000
 )
 
 // Status is used to show the current states status.
 type Status struct {
-	ID       int    `json:"id"`
-	LeaderID int    `json:"leader_id"`
+	ID       uint32 `json:"id"`
+	LeaderID uint32 `json:"leader_id"`
 	State    string `json:"state"`
 	Term     int    `json:"term"`
-	VotedFor int    `json:"voted_for"`
+	VotedFor uint32 `json:"voted_for"`
 }
 
 // State encapsulates the current nodes raft state.
@@ -42,11 +42,11 @@ type State struct {
 	// appendEntriesChan holds events for AppendEntries, it will use the term value
 	appendEntriesChan chan *AppendEntriesRequest
 	// id is this nodes id, it will be set to the hashed addr % 1000
-	id int
+	id uint32
 	// heartbeatResetChan is used to reset a heartbeat ticker.
 	heartbeatResetChan chan struct{}
 	// leaderID is the current leader.
-	leaderID int
+	leaderID uint32
 	mu       *sync.Mutex
 	// state is one of Follower, Candidate, Leader
 	state int
@@ -56,7 +56,7 @@ type State struct {
 	// term is the current term for consensus.
 	term int
 	// votedFor is used during election.
-	votedFor int
+	votedFor uint32
 
 	// electionTimeout specifies the time in the candidate state without
 	// a leader before we attempt an election.
@@ -67,7 +67,7 @@ type State struct {
 }
 
 // NewState initializes a new raft state.
-func NewState(id int, electionTimeoutMS, heartbeatTimeoutMS int) *State {
+func NewState(id uint32, electionTimeoutMS, heartbeatTimeoutMS int) *State {
 	return &State{
 		appendEntriesChan:  make(chan *AppendEntriesRequest),
 		electionTimeoutMS:  electionTimeoutMS,
@@ -98,7 +98,7 @@ func (s *State) String() string {
 }
 
 // ID returns the nodes id.
-func (s *State) ID() int {
+func (s *State) ID() uint32 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.id
@@ -106,7 +106,7 @@ func (s *State) ID() int {
 
 // LeaderID will return the states current leader id or if
 // an argument is passed in will set the current LeaderID.
-func (s *State) LeaderID(id ...int) int {
+func (s *State) LeaderID(id ...uint32) uint32 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(id) > 0 {
@@ -157,7 +157,7 @@ func (s *State) Term(term ...int) int {
 
 // VotedFor will return the states current vote or if
 // an argument is passed in will set the vote
-func (s *State) VotedFor(votedFor ...int) int {
+func (s *State) VotedFor(votedFor ...uint32) uint32 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(votedFor) > 0 {
@@ -186,7 +186,7 @@ func (s *State) StateChanged() chan int {
 	return s.stateChangeChan
 }
 
-// AppendEntriesEvent returns a channel for any succesful append entries events.
+// AppendEntriesEvent returns a channel for any successful append entries events.
 func (s *State) AppendEntriesEvent(event ...*AppendEntriesRequest) chan *AppendEntriesRequest {
 	if len(event) > 0 {
 		go func() {

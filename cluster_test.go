@@ -1,4 +1,4 @@
-package dinghy
+package cluster
 
 import (
 	"fmt"
@@ -38,11 +38,10 @@ func equals(tb testing.TB, exp, act interface{}) {
 	}
 }
 
-func newDinghy(t testing.TB) *Dinghy {
+func newCluster(t testing.TB) *Cluster {
 	l := log.New(ioutil.Discard, "", log.Ldate|log.Ltime|log.Lshortfile)
 	ll := &LogLogger{l}
-	din, err := New(
-		"localhost:9999",
+	cl, err := New(
 		[]string{"localhost:9999", "localhost:9998"},
 		DefaultOnLeader,
 		DefaultOnFollower,
@@ -51,7 +50,7 @@ func newDinghy(t testing.TB) *Dinghy {
 		10,
 	)
 	ok(t, err)
-	return din
+	return cl
 }
 
 func TestNew(t *testing.T) {
@@ -64,7 +63,7 @@ func TestNew(t *testing.T) {
 	tests := []struct {
 		name            string
 		args            args
-		want            *Dinghy
+		want            *Cluster
 		wantErr         bool
 		wantLeaderErr   bool
 		wantFollowerErr bool
@@ -75,8 +74,7 @@ func TestNew(t *testing.T) {
 				addr:  "localhost:9999",
 				nodes: []string{"localhost:9999", "localhost:9998"},
 			},
-			&Dinghy{
-				Addr:       "localhost:9999",
+			&Cluster{
 				Nodes:      []string{"localhost:9999", "localhost:9998"},
 				OnLeader:   DefaultOnLeader,
 				OnFollower: DefaultOnFollower,
@@ -91,8 +89,7 @@ func TestNew(t *testing.T) {
 				addr:  "localhost:9999",
 				nodes: []string{"localhost:9999", "localhost:9998"},
 			},
-			&Dinghy{
-				Addr:       "localhost:9999",
+			&Cluster{
 				Nodes:      []string{"localhost:9999", "localhost:9998"},
 				OnLeader:   func() error { return fmt.Errorf("") },
 				OnFollower: func() error { return fmt.Errorf("") },
@@ -106,12 +103,11 @@ func TestNew(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			l := log.New(ioutil.Discard, "", 0)
 			ll := &LogLogger{l}
-			got, err := New(tt.args.addr, tt.args.nodes, tt.args.onLeader, tt.args.onFollower, ll, 10, 10)
+			got, err := New(tt.args.nodes, tt.args.onLeader, tt.args.onFollower, ll, 10, 10)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			equals(t, got.Addr, tt.want.Addr)
 			equals(t, got.Nodes, tt.want.Nodes)
 			got.mu.Lock()
 			defer got.mu.Unlock()
@@ -129,8 +125,8 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func TestDinghy_StartStop(t *testing.T) {
-	din := newDinghy(t)
+func TestCluster_StartStop(t *testing.T) {
+	din := newCluster(t)
 	go func() {
 		err := din.Start()
 		if err != nil {
@@ -146,95 +142,95 @@ func TestDinghy_StartStop(t *testing.T) {
 	equals(t, "unknown state 99", err.Error())
 }
 
-func TestDinghy_follower(t *testing.T) {
+func TestCluster_follower(t *testing.T) {
 	// coverage only
-	din := newDinghy(t)
-	go din.Start()
-	go din.follower()
+	cl := newCluster(t)
+	go cl.Start()
+	go cl.follower()
 	time.Sleep(time.Millisecond * 10)
-	din.Stop()
+	cl.Stop()
 
 	// state change
-	go din.Start()
-	go din.follower()
-	din.State.State(StateCandidate)
+	go cl.Start()
+	go cl.follower()
+	cl.State.State(StateCandidate)
 	time.Sleep(time.Millisecond * 20)
-	din.Stop()
+	cl.Stop()
 
 	// append entries
-	din.State.State(StateFollower)
-	go din.Start()
-	go din.follower()
-	din.State.AppendEntriesEvent(&AppendEntriesRequest{5, din.State.ID()})
+	cl.State.State(StateFollower)
+	go cl.Start()
+	go cl.follower()
+	cl.State.AppendEntriesEvent(&AppendEntriesRequest{5, cl.State.ID(), cl.State.ID()})
 	time.Sleep(time.Millisecond * 20)
-	din.Stop()
+	cl.Stop()
 
 	// heartbeat timeout
-	din.State.State(StateFollower)
-	go din.Start()
-	go din.leader()
+	cl.State.State(StateFollower)
+	go cl.Start()
+	go cl.leader()
 	time.Sleep(time.Millisecond * 10)
-	din.Stop()
+	cl.Stop()
 
 	wantErr := fmt.Errorf("test")
-	din.mu.Lock()
-	din.OnFollower = func() error { return wantErr }
-	din.mu.Unlock()
-	err := din.Start()
+	cl.mu.Lock()
+	cl.OnFollower = func() error { return wantErr }
+	cl.mu.Unlock()
+	err := cl.Start()
 	equals(t, wantErr, err)
 }
 
-func TestDinghy_candidate(t *testing.T) {
+func TestCluster_candidate(t *testing.T) {
 	// coverage only
-	din := newDinghy(t)
-	go din.Start()
-	go din.candidate()
+	cl := newCluster(t)
+	go cl.Start()
+	go cl.candidate()
 	time.Sleep(time.Millisecond * 10)
-	din.Stop()
+	cl.Stop()
 
 	// state change
-	go din.Start()
-	go din.leader()
-	din.State.State(StateFollower)
+	go cl.Start()
+	go cl.leader()
+	cl.State.State(StateFollower)
 	time.Sleep(time.Millisecond * 20)
-	din.Stop()
+	cl.Stop()
 
 	// election timeout
-	din.State.State(StateCandidate)
-	go din.Start()
-	go din.leader()
+	cl.State.State(StateCandidate)
+	go cl.Start()
+	go cl.leader()
 	time.Sleep(time.Millisecond * 10)
-	din.Stop()
+	cl.Stop()
 }
 
-func TestDinghy_leader(t *testing.T) {
+func TestCluster_leader(t *testing.T) {
 	// coverage only
-	din := newDinghy(t)
-	go din.Start()
-	go din.leader()
+	cl := newCluster(t)
+	go cl.Start()
+	go cl.leader()
 	time.Sleep(time.Millisecond * 10)
-	din.Stop()
+	cl.Stop()
 
 	// state change
-	go din.Start()
-	go din.leader()
-	din.State.State(StateFollower)
+	go cl.Start()
+	go cl.leader()
+	cl.State.State(StateFollower)
 	time.Sleep(time.Millisecond * 20)
-	din.Stop()
+	cl.Stop()
 
 	// heartbeat tick
-	din.State.State(StateLeader)
-	go din.Start()
-	go din.leader()
+	cl.State.State(StateLeader)
+	go cl.Start()
+	go cl.leader()
 	time.Sleep(time.Millisecond * 10)
-	din.Stop()
+	cl.Stop()
 
 	wantErr := fmt.Errorf("test")
-	din.mu.Lock()
-	din.OnLeader = func() error { return wantErr }
-	din.mu.Unlock()
-	err := din.leader()
+	cl.mu.Lock()
+	cl.OnLeader = func() error { return wantErr }
+	cl.mu.Unlock()
+	err := cl.leader()
 	equals(t, wantErr, err)
 	time.Sleep(time.Millisecond * 10)
-	equals(t, StateFollower, din.State.State())
+	equals(t, StateFollower, cl.State.State())
 }

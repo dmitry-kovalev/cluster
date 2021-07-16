@@ -1,4 +1,4 @@
-package dinghy
+package cluster
 
 import (
 	"encoding/json"
@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-func TestDinghy_RequestVoteRequest(t *testing.T) {
-	din := newDinghy(t)
-	din.Nodes = []string{}
+func TestCluster_RequestVoteRequest(t *testing.T) {
+	cl := newCluster(t)
+	cl.Nodes = []string{}
 
 	tests := []struct {
 		name         string
@@ -27,8 +27,9 @@ func TestDinghy_RequestVoteRequest(t *testing.T) {
 			endState:   StateLeader,
 			useNodes:   false,
 			nodeResponse: requestVoteResponse{
-				Term:        din.State.Term(),
+				Term:        cl.State.Term(),
 				VoteGranted: true,
+				NodeID:      cl.State.ID(),
 			},
 			startTerm: 1,
 			endTerm:   1,
@@ -40,8 +41,9 @@ func TestDinghy_RequestVoteRequest(t *testing.T) {
 			endState:   StateLeader,
 			useNodes:   false,
 			nodeResponse: requestVoteResponse{
-				Term:        din.State.Term(),
+				Term:        cl.State.Term(),
 				VoteGranted: true,
+				NodeID:      cl.State.ID(),
 			},
 			startTerm: 1,
 			endTerm:   1,
@@ -53,8 +55,9 @@ func TestDinghy_RequestVoteRequest(t *testing.T) {
 			endState:   StateCandidate,
 			useNodes:   true,
 			nodeResponse: requestVoteResponse{
-				Term:        din.State.Term(),
+				Term:        cl.State.Term(),
 				VoteGranted: true,
+				NodeID:      cl.State.ID(),
 			},
 			startTerm: 1,
 			endTerm:   1,
@@ -66,12 +69,13 @@ func TestDinghy_RequestVoteRequest(t *testing.T) {
 			endState:   StateFollower,
 			useNodes:   true,
 			nodeResponse: requestVoteResponse{
-				Term:        din.State.Term(),
+				Term:        cl.State.Term(),
 				VoteGranted: false,
+				NodeID:      cl.State.ID(),
 			},
 			startTerm: 1,
 			endTerm:   1,
-			err:       ErrTooFewVotes,
+			err:       nil,
 		},
 		{
 			name:       "04 step down",
@@ -79,8 +83,9 @@ func TestDinghy_RequestVoteRequest(t *testing.T) {
 			endState:   StateFollower,
 			useNodes:   true,
 			nodeResponse: requestVoteResponse{
-				Term:        din.State.Term() + 2,
+				Term:        cl.State.Term() + 2,
 				VoteGranted: true,
+				NodeID:      cl.State.ID(),
 			},
 			startTerm: 1,
 			endTerm:   3,
@@ -90,8 +95,8 @@ func TestDinghy_RequestVoteRequest(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			nodeResponse := tt.nodeResponse
-			din.State.Term(tt.startTerm)
-			din.State.State(tt.startState)
+			cl.State.Term(tt.startTerm)
+			cl.State.State(tt.startState)
 			if tt.useNodes {
 				node0 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					json.NewEncoder(w).Encode(nodeResponse)
@@ -108,23 +113,23 @@ func TestDinghy_RequestVoteRequest(t *testing.T) {
 				node4 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					json.NewEncoder(w).Encode(nodeResponse)
 				}))
-				din.Nodes = []string{node0.URL, node1.URL, node2.URL, node3.URL, node4.URL}
+				cl.Nodes = []string{node0.URL, node1.URL, node2.URL, node3.URL, node4.URL}
 			} else {
 				node0 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					json.NewEncoder(w).Encode(nodeResponse)
 				}))
-				din.Nodes = []string{node0.URL}
+				cl.Nodes = []string{node0.URL}
 			}
-			currentTerm, err := din.RequestVoteRequest()
+			currentTerm, err := cl.RequestVoteRequest()
 			equals(t, tt.err, err)
-			equals(t, din.State.StateString(tt.endState), din.State.StateString(din.State.State()))
+			equals(t, cl.State.StateString(tt.endState), cl.State.StateString(cl.State.State()))
 			equals(t, tt.endTerm, currentTerm)
 		})
 	}
 }
 
-func TestDinghy_AppendEntriesRequest(t *testing.T) {
-	din := newDinghy(t)
+func TestCluster_AppendEntriesRequest(t *testing.T) {
+	cl := newCluster(t)
 
 	tests := []struct {
 		name         string
@@ -166,8 +171,8 @@ func TestDinghy_AppendEntriesRequest(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			nodeResponse := tt.nodeResponse
-			din.State.Term(tt.startTerm)
-			din.State.State(tt.startState)
+			cl.State.Term(tt.startTerm)
+			cl.State.State(tt.startState)
 			if tt.useNodes {
 				node0 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					json.NewEncoder(w).Encode(nodeResponse)
@@ -184,11 +189,11 @@ func TestDinghy_AppendEntriesRequest(t *testing.T) {
 				node4 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					json.NewEncoder(w).Encode(nodeResponse)
 				}))
-				din.Nodes = []string{node0.URL, node1.URL, node2.URL, node3.URL, node4.URL}
+				cl.Nodes = []string{node0.URL, node1.URL, node2.URL, node3.URL, node4.URL}
 			}
-			currentTerm, err := din.AppendEntriesRequest()
+			currentTerm, err := cl.AppendEntriesRequest()
 			equals(t, tt.err, err)
-			equals(t, din.State.StateString(tt.endState), din.State.StateString(din.State.State()))
+			equals(t, cl.State.StateString(tt.endState), cl.State.StateString(cl.State.State()))
 			equals(t, tt.endTerm, currentTerm)
 		})
 	}

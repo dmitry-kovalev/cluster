@@ -1,4 +1,4 @@
-package dinghy
+package cluster
 
 import (
 	"fmt"
@@ -9,6 +9,8 @@ import (
 type Logger interface {
 	Printf(format string, v ...interface{})
 	Println(v ...interface{})
+	Infof(format string, v ...interface{})
+	Debugf(format string, v ...interface{})
 	Errorf(format string, v ...interface{})
 	Errorln(v ...interface{})
 }
@@ -22,6 +24,12 @@ func (d *DiscardLogger) Println(v ...interface{}) {}
 
 // Printf noop
 func (d *DiscardLogger) Printf(format string, v ...interface{}) {}
+
+// Infof noop
+func (d *DiscardLogger) Infof(format string, v ...interface{}) {}
+
+// Debugf noop
+func (d *DiscardLogger) Debugf(format string, v ...interface{}) {}
 
 // Errorln noop
 func (d *DiscardLogger) Errorln(v ...interface{}) {}
@@ -42,6 +50,16 @@ func (d *LogLogger) Println(v ...interface{}) {
 // Printf std lib
 func (d *LogLogger) Printf(format string, v ...interface{}) {
 	d.Logger.Output(3, fmt.Sprintf("[INFO] "+format, v...))
+}
+
+// Infof std lib
+func (d *LogLogger) Infof(format string, v ...interface{}) {
+	d.Logger.Output(3, fmt.Sprintf("[INFO] "+format, v...))
+}
+
+// Debugf std lib
+func (d *LogLogger) Debugf(format string, v ...interface{}) {
+	d.Logger.Output(3, fmt.Sprintf("[DEBU] "+format, v...))
 }
 
 // Errorln std lib

@@ -1,4 +1,4 @@
-package dinghy
+package cluster
 
 import (
 	"hash/fnv"

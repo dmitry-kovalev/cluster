@@ -1,8 +1,9 @@
-package dinghy
+package cluster
 
 import (
 	"errors"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"sync"
 	"time"
@@ -13,8 +14,8 @@ var (
 	DefaultOnLeader = func() error { return nil }
 	// DefaultOnFollower is a no op function to execute when a node becomes a follower.
 	DefaultOnFollower = func() error { return nil }
-	// DefaultRoutePrefix is what is prefixed for the dinghy routes. (/dinghy)
-	DefaultRoutePrefix = "/dinghy"
+	// DefaultRoutePrefix is what is prefixed for the cluster routes. (/cluster)
+	DefaultRoutePrefix = "/cluster"
 	// ErrTooFewVotes happens on a RequestVote when the candidate receives less than the
 	// majority of votes.
 	ErrTooFewVotes = errors.New("too few votes")
@@ -28,16 +29,14 @@ var (
 	ErrNotLeader = errors.New("node is not the leader")
 )
 
-// Dinghy manages the raft FSM and executes OnLeader and OnFollower events.
-type Dinghy struct {
+// Cluster manages the raft FSM and executes OnLeader and OnFollower events.
+type Cluster struct {
 	client *http.Client
 	logger Logger
 	mu     *sync.Mutex
 	// routePrefix will be prefixed to all handler routes. This should start with /route.
 	routePrefix string
 	stopChan    chan struct{}
-	// Addr is a host:port for the current node.
-	Addr string
 	// Nodes is a list of all nodes for consensus.
 	Nodes []string
 	// OnLeader is an optional function to execute when becoming a leader.
@@ -51,10 +50,10 @@ type Dinghy struct {
 // ApplyFunc is for on leader and on follower events.
 type ApplyFunc func() error
 
-// New initializes a new dinghy. Start is required to be run to
+// New initializes a new cluster. Start is required to be run to
 // begin leader election.
-func New(addr string, nodes []string, onLeader, onFollower ApplyFunc, l Logger, eMS, hMS int) (*Dinghy, error) {
-	l.Println("addr:", addr, "nodes:", nodes)
+func New(nodes []string, onLeader, onFollower ApplyFunc, l Logger, eMS, hMS int) (*Cluster, error) {
+	l.Infof("Creating cluster node with nodes: %v", nodes)
 
 	if onLeader == nil {
 		onLeader = DefaultOnLeader
@@ -62,112 +61,108 @@ func New(addr string, nodes []string, onLeader, onFollower ApplyFunc, l Logger, 
 	if onFollower == nil {
 		onFollower = DefaultOnFollower
 	}
-	c := &http.Client{
+	client := &http.Client{
 		Timeout: time.Duration(hMS) * time.Millisecond,
 	}
 
-	id, err := hashToInt(addr, len(nodes)*1000)
-	if err != nil {
-		return nil, err
-	}
-	id++
+	id := rand.Uint32()
 	mu := &sync.Mutex{}
 	mu.Lock()
-	d := &Dinghy{
-		client:      c,
+	c := &Cluster{
+		client:      client,
 		logger:      l,
 		mu:          mu,
 		routePrefix: DefaultRoutePrefix,
 		stopChan:    make(chan struct{}),
-		Addr:        addr,
 		Nodes:       nodes,
 		OnLeader:    onLeader,
 		OnFollower:  onFollower,
 		State:       NewState(id, eMS, hMS),
 	}
 	mu.Unlock()
-	l.Printf("%+v", d)
-	return d, nil
+	l.Debugf("Cluster: %+v", c)
+	return c, nil
 }
 
 // Stop will stop any running event loop.
-func (d *Dinghy) Stop() error {
-	d.logger.Println("stopping event loop")
+func (c *Cluster) Stop() error {
+	c.logger.Infof("Stopping cluster node")
 	// exit any state running and the main event fsm.
 	for i := 0; i < 2; i++ {
-		d.stopChan <- struct{}{}
+		c.stopChan <- struct{}{}
 	}
 	return nil
 }
 
 // Start begins the leader election process.
-func (d *Dinghy) Start() error {
-	d.logger.Println("starting event loop")
+func (c *Cluster) Start() error {
+	c.logger.Infof("Starting cluster node")
 	for {
-		d.logger.Println(d.State)
+		c.logger.Infof("Current state is %s", c.State)
 		select {
-		case <-d.stopChan:
-			d.logger.Println("stopping event loop")
+		case <-c.stopChan:
+			c.logger.Infof("Stopping cluster node")
 			return nil
 		default:
 		}
-		switch d.State.State() {
+		switch c.State.State() {
 		case StateFollower:
-			if err := d.follower(); err != nil {
+			if err := c.follower(); err != nil {
 				return err
 			}
 		case StateCandidate:
-			d.candidate()
+			c.candidate()
 		case StateLeader:
-			if err := d.leader(); err != nil {
+			if err := c.leader(); err != nil {
 				return err
 			}
 		default:
-			return fmt.Errorf("unknown state %d", d.State.State())
+			c.logger.Errorf("Unknown state %d", c.State.State())
+			return fmt.Errorf("unknown state %d", c.State.State())
 		}
 	}
 }
 
 // follower will wait for an AppendEntries from the leader and on expiration will begin
 // the process of leader election with a RequestVote.
-func (d *Dinghy) follower() error {
-	d.logger.Println("entering follower state, leader id", d.State.LeaderID())
-	d.mu.Lock()
-	if err := d.OnFollower(); err != nil {
-		d.logger.Errorln("executing OnFollower", err)
-		d.mu.Unlock()
+func (c *Cluster) follower() error {
+	c.logger.Infof("Entering follower state, leader id %d", c.State.LeaderID())
+	c.mu.Lock()
+	if err := c.OnFollower(); err != nil {
+		c.logger.Errorf("Can't execute OnFollower: %v", err)
+		c.mu.Unlock()
 		return err
 	}
-	d.mu.Unlock()
+	c.mu.Unlock()
 LOOP:
 	for {
 		select {
-		case <-d.stopChan:
+		case <-c.stopChan:
 			return nil
-		case newState := <-d.State.StateChanged():
+		case newState := <-c.State.StateChanged():
 			if newState == StateFollower {
 				continue
 			}
-			d.logger.Println("follower state changed to", d.State.StateString(newState))
+			c.logger.Infof("Follower state changed to %v", c.State.StateString(newState))
 			return nil
-		case <-d.State.HeartbeatReset():
-			d.logger.Println("heartbeat reset")
+		case <-c.State.HeartbeatReset():
+			c.logger.Infof("Heartbeat reset")
 			continue LOOP
-		case aer := <-d.State.AppendEntriesEvent():
-			d.logger.Println(d.State.StateString(d.State.State()), "got AppendEntries from leader", aer)
+		case aer := <-c.State.AppendEntriesEvent():
+			c.logger.Debugf(" %v got AppendEntries from leader %v", c.State.StateString(c.State.State()), aer)
 			continue LOOP
-		case h := <-d.State.HeartbeatTickRandom():
+		case <-c.State.HeartbeatTickRandom():
 			// https://raft.github.io/raft.pdf
 			// If a follower receives no communication over a period of time
 			// called the election timeout, then it assumes there is no viable
 			// leader and begins an election to choose a new leader.
 			// To begin an election, a follower increments its current
 			// term and transitions to candidate state.
-			d.logger.Println("follower heartbeat timeout, transitioning to candidate", h)
-			d.State.VotedFor(NoVote)
-			d.State.LeaderID(UnknownLeaderID)
-			d.State.Term(d.State.Term() + 1)
-			d.State.State(StateCandidate)
+			c.logger.Infof("Follower heartbeat timeout, transitioning to candidate")
+			c.State.VotedFor(NoVote)
+			c.State.LeaderID(UnknownLeaderID)
+			c.State.Term(c.State.Term() + 1)
+			c.State.State(StateCandidate)
 			return nil
 		}
 	}
@@ -180,30 +175,30 @@ LOOP:
 // this state until one of three things happens: (a) it wins the
 // election, (b) another server establishes itself as leader, or
 // (c) a period of time goes by with no winner.
-func (d *Dinghy) candidate() {
-	d.logger.Println("entering candidate state")
+func (c *Cluster) candidate() {
+	c.logger.Infof("Entering candidate state")
 	go func() {
-		d.logger.Println("requesting vote")
-		currentTerm, err := d.RequestVoteRequest()
+		c.logger.Infof("Requesting vote")
+		currentTerm, err := c.RequestVoteRequest()
 		if err != nil {
-			d.logger.Errorln("executing RequestVoteRequest", err)
+			c.logger.Errorf("Executing RequestVoteRequest: %v", err)
 			switch err {
 			case ErrNewElectionTerm:
-				d.State.StepDown(currentTerm)
+				c.State.StepDown(currentTerm)
 			case ErrTooFewVotes:
-				d.State.State(StateFollower)
+				c.State.State(StateFollower)
 			}
 			return
 		}
 		// it wins the election
-		d.State.LeaderID(d.State.ID())
-		d.State.State(StateLeader)
+		c.State.LeaderID(c.State.ID())
+		c.State.State(StateLeader)
 	}()
 	for {
 		select {
-		case <-d.stopChan:
+		case <-c.stopChan:
 			return
-		case aer := <-d.State.AppendEntriesEvent():
+		case aer := <-c.State.AppendEntriesEvent():
 			// https://raft.github.io/raft.pdf
 			// While waiting for votes, a candidate may receive an
 			// AppendEntries RPC from another server claiming to be
@@ -213,19 +208,19 @@ func (d *Dinghy) candidate() {
 			// state. If the term in the RPC is smaller than the candidate’s
 			// current term, then the candidate rejects the RPC and continues
 			// in candidate state.
-			d.logger.Println("candidate got an AppendEntries from a leader", aer)
-			if aer.Term >= d.State.Term() {
-				d.State.StepDown(aer.Term)
+			c.logger.Infof("Candidate got an AppendEntries from a leader %v", aer)
+			if aer.Term >= c.State.Term() {
+				c.State.StepDown(aer.Term)
 				return
 			}
-		case newState := <-d.State.StateChanged():
+		case newState := <-c.State.StateChanged():
 			if newState == StateCandidate {
 				continue
 			}
-			d.logger.Println("candidate state changed to", d.State.StateString(newState))
+			c.logger.Infof("Candidate state changed to %s", c.State.StateString(newState))
 			return
-		case e := <-d.State.ElectionTick():
-			d.logger.Println("election timeout, restarting election", e)
+		case e := <-c.State.ElectionTick():
+			c.logger.Infof("Election timeout, restarting election %v", e)
 			return
 		}
 	}
@@ -233,50 +228,50 @@ func (d *Dinghy) candidate() {
 
 // leader is for when in StateLeader. The loop will continually send
 // a heartbeat of AppendEntries to all peers at a rate of HeartbeatTimeoutMS.
-func (d *Dinghy) leader() error {
-	d.logger.Println("entering leader state")
-	go d.AppendEntriesRequest()
+func (c *Cluster) leader() error {
+	c.logger.Infof("Entering leader state")
+	go c.AppendEntriesRequest()
 	errChan := make(chan error)
 	go func() {
 		// Run the OnLeader event in a goroutine in case
 		// it has a long delay. Any errors returned will exit the
 		// leader state.
-		d.mu.Lock()
-		defer d.mu.Unlock()
-		if err := d.OnLeader(); err != nil {
-			d.logger.Errorln("executing OnLeader", err)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if err := c.OnLeader(); err != nil {
+			c.logger.Errorf("Can't execute OnLeader: %v", err)
 			errChan <- err
 		}
 	}()
 	for {
 		select {
 		case err := <-errChan:
-			d.State.State(StateFollower)
+			c.State.State(StateFollower)
 			go func() {
 				// Removing the state change event here
 				// before returning error.
-				<-d.State.StateChanged()
+				<-c.State.StateChanged()
 			}()
 			return err
-		case <-d.stopChan:
+		case <-c.stopChan:
 			return nil
-		case <-d.State.AppendEntriesEvent():
+		case <-c.State.AppendEntriesEvent():
 			// ignore any append entries to self.
 			continue
-		case newState := <-d.State.StateChanged():
+		case newState := <-c.State.StateChanged():
 			if newState == StateLeader {
 				continue
 			}
-			d.logger.Println("leader state changed to", d.State.StateString(newState))
+			c.logger.Infof("Leader state changed to %s", c.State.StateString(newState))
 			return nil
-		case h := <-d.State.HeartbeatTick():
-			d.logger.Println("sending to peers AppendEntriesRequest", d.Nodes, h)
-			currentTerm, err := d.AppendEntriesRequest()
+		case h := <-c.State.HeartbeatTick():
+			c.logger.Debugf("Sending to peers AppendEntriesRequest %v %v", c.Nodes, h)
+			currentTerm, err := c.AppendEntriesRequest()
 			if err != nil {
-				d.logger.Errorln("executing AppendEntriesRequest", err)
+				c.logger.Errorf("Executing AppendEntriesRequest: %v", err)
 				switch err {
 				case ErrNewElectionTerm:
-					d.State.StepDown(currentTerm)
+					c.State.StepDown(currentTerm)
 					return nil
 				}
 			}

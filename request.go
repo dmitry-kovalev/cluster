@@ -1,4 +1,4 @@
-package dinghy
+package cluster
 
 import (
 	"bytes"
@@ -12,8 +12,9 @@ import (
 
 // AppendEntriesRequest represents AppendEntries requests. Replication logging is ignored.
 type AppendEntriesRequest struct {
-	Term     int `json:"term"`
-	LeaderID int `json:"leader_id"`
+	Term     int    `json:"term"`
+	LeaderID uint32 `json:"leader_id"`
+	NodeID   uint32 `json:"node_id"`
 }
 
 // appendEntriesResponse represents the response to an appendEntries. In
@@ -22,13 +23,15 @@ type appendEntriesResponse struct {
 	Term    int    `json:"term"`
 	Success bool   `json:"success"`
 	Reason  string `json:"reason,omitempty"`
+	NodeID  uint32 `json:"node_id"`
 }
 
 // requestVoteRequest represents a requestVote sent by a candidate after an
 // election timeout.
 type requestVoteRequest struct {
-	Term        int `json:"term"`
-	CandidateID int `json:"candidate_id"`
+	Term        int    `json:"term"`
+	CandidateID uint32 `json:"candidate_id"`
+	NodeID      uint32 `json:"node_id"`
 }
 
 // requestVoteResponse represents the response to a requestVote.
@@ -36,103 +39,128 @@ type requestVoteResponse struct {
 	Term        int    `json:"term"`
 	VoteGranted bool   `json:"vote_granted"`
 	Reason      string `json:"reason,omitempty"`
+	NodeID      uint32 `json:"node_id"`
 }
 
-// RequestVoteRequest will broadcast a request for votes in order to update dinghy to
+// RequestVoteRequest will broadcast a request for votes in order to update node to
 // either a follower or leader. If this candidate becomes leader error
 // will return nil. The latest known term is always
 // returned (this could be a newer term from another peer).
-func (d *Dinghy) RequestVoteRequest() (int, error) {
-	if d.State.State() == StateLeader {
+func (c *Cluster) RequestVoteRequest() (int, error) {
+	if c.State.State() == StateLeader {
 		// no op
-		d.logger.Println("already leader")
-		return d.State.Term(), nil
+		c.logger.Infof("Already leader")
+		return c.State.Term(), nil
 	}
 
 	rvr := requestVoteRequest{
-		Term:        d.State.Term(),
-		CandidateID: d.State.ID(),
+		Term:        c.State.Term(),
+		CandidateID: c.State.ID(),
+		NodeID:      c.State.ID(),
 	}
 	method := "POST"
-	route := d.routePrefix + RouteRequestVote
+	route := c.routePrefix + RouteRequestVote
 	body, err := json.Marshal(rvr)
 	if err != nil {
-		d.logger.Errorln("could not create payload", method, route, string(body))
-		return d.State.Term(), err
+		c.logger.Errorf("could not create payload %v %v %v", method, route, string(body))
+		return c.State.Term(), err
 	}
-	responses := d.BroadcastRequest(d.Nodes, method, route, body, 0)
-	votes := 0
+	responses := c.BroadcastRequest(c.Nodes, method, route, body, 0)
+	defer func() {
+		for _, resp := range responses {
+			if resp == nil {
+				continue
+			}
+			resp.Body.Close()
+		}
+	}()
+	ballots := make(map[uint32]bool)
 LOOP:
 	for i, resp := range responses {
 		if resp == nil {
 			// peer failed
 			continue LOOP
 		}
-		defer resp.Body.Close()
 		var rvr requestVoteResponse
 		if err := json.NewDecoder(resp.Body).Decode(&rvr); err != nil {
-			d.logger.Errorln("peer request returned invalid", d.Nodes[i], err)
+			c.logger.Errorf("Peer request returned invalid nodes %v because of %v", c.Nodes[i], err)
 			continue LOOP
 		}
-		if rvr.Term > d.State.Term() {
+		if rvr.Term > c.State.Term() {
 			// step down to a follower with the newer term
-			d.logger.Printf("newer election term found %+v %s", rvr, d.State)
+			c.logger.Infof("Newer election term found %+v %s", rvr, c.State)
 			return rvr.Term, ErrNewElectionTerm
 		}
-		if rvr.VoteGranted {
-			d.logger.Printf("vote granted from %s %+v", d.Nodes[i], rvr)
+		if _, ok := ballots[rvr.NodeID]; ok {
+			c.logger.Infof("Node %v already voted, skipping %+v", rvr.NodeID, rvr)
+		} else {
+			ballots[rvr.NodeID] = rvr.VoteGranted
+		}
+	}
+	votes := 0
+	for _, vote := range ballots {
+		if vote {
 			votes++
 		}
 	}
 
-	if votes < (len(d.Nodes))/2 {
-		d.logger.Printf("too few votes %d but need more than %d", votes, (len(d.Nodes))/2)
-		return d.State.Term(), ErrTooFewVotes
+	// if votes < (len(c.Nodes))/2 {
+	if votes < (len(ballots))/2 {
+		c.logger.Infof("Too few votes %d but need more than %d", votes, (len(ballots))/2) // (len(c.Nodes))/2)
+		return c.State.Term(), ErrTooFewVotes
 	}
 
-	d.logger.Printf("election won with %d votes, becoming leader %s", votes, d.State)
-	return d.State.Term(), nil
+	c.logger.Infof("Election won with %d votes, becoming leader %s", votes, c.State)
+	return c.State.Term(), nil
 }
 
 // AppendEntriesRequest will broadcast an AppendEntries request to peers.
 // In the raft protocol this deals with appending and processing the
 // replication log, however for leader election this is unused.
 // It returns the current term with any errors.
-func (d *Dinghy) AppendEntriesRequest() (int, error) {
+func (c *Cluster) AppendEntriesRequest() (int, error) {
 	aer := AppendEntriesRequest{
-		Term:     d.State.Term(),
-		LeaderID: d.State.ID(),
+		Term:     c.State.Term(),
+		LeaderID: c.State.ID(),
+		NodeID:   c.State.ID(),
 	}
 	method := "POST"
-	route := d.routePrefix + RouteAppendEntries
+	route := c.routePrefix + RouteAppendEntries
 	body, err := json.Marshal(aer)
 	if err != nil {
-		d.logger.Errorln("could not create payload", method, route, string(body))
-		return d.State.Term(), err
+		c.logger.Errorf("could not create payload %v %v %v", method, route, string(body))
+		return c.State.Term(), err
 	}
-	responses := d.BroadcastRequest(d.Nodes, method, route, body, d.State.heartbeatTimeoutMS/2)
+	responses := c.BroadcastRequest(c.Nodes, method, route, body, c.State.heartbeatTimeoutMS/2)
+	defer func() {
+		for _, resp := range responses {
+			if resp == nil {
+				continue
+			}
+			resp.Body.Close()
+		}
+	}()
 	for i, resp := range responses {
 		if resp == nil {
 			// peer failed
 			continue
 		}
-		defer resp.Body.Close()
 		var aer appendEntriesResponse
 		if err := json.NewDecoder(resp.Body).Decode(&aer); err != nil {
-			d.logger.Errorln("peer request returned invalid", d.Nodes[i], err)
+			c.logger.Errorf("peer request returned invalid nodes %v because of %v", c.Nodes[i], err)
 			continue
 		}
-		if aer.Term > d.State.Term() {
-			d.logger.Printf("newer election term found %+v", aer)
+		if aer.Term > c.State.Term() {
+			c.logger.Infof("newer election term found %+v", aer)
 			return aer.Term, ErrNewElectionTerm
 		}
 	}
 
-	return d.State.Term(), nil
+	return c.State.Term(), nil
 }
 
 // BroadcastRequest will send a request to all other nodes in the system.
-func (d *Dinghy) BroadcastRequest(peers []string, method, route string, body []byte, timeoutMS int) []*http.Response {
+func (c *Cluster) BroadcastRequest(peers []string, method, route string, body []byte, timeoutMS int) []*http.Response {
 	responses := make([]*http.Response, len(peers))
 	wg := &sync.WaitGroup{}
 	for ind, peer := range peers {
@@ -146,7 +174,7 @@ func (d *Dinghy) BroadcastRequest(peers []string, method, route string, body []b
 			}
 			req, err := http.NewRequest(method, url, bytes.NewBuffer(body))
 			if err != nil {
-				d.logger.Errorln("could not create request", method, url, string(body))
+				c.logger.Errorf("could not create request %v %v %v", method, url, string(body))
 				return
 			}
 			if timeoutMS > 0 {
@@ -154,9 +182,9 @@ func (d *Dinghy) BroadcastRequest(peers []string, method, route string, body []b
 				defer cancel()
 				req = req.WithContext(ctx)
 			}
-			resp, err := d.client.Do(req)
+			resp, err := c.client.Do(req)
 			if err != nil {
-				d.logger.Errorln("failed request", err, method, url, string(body))
+				c.logger.Debugf("Failed request %v %v %v (%v)", method, url, err, string(body))
 				return
 			}
 			responses[i] = resp

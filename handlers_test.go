@@ -1,32 +1,34 @@
-package dinghy
+package cluster
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
 )
 
-func TestDinghy_Handlers(t *testing.T) {
-	din := newDinghy(t)
-	r := din.Routes()
+func TestCluster_Handlers(t *testing.T) {
+	cl := newCluster(t)
+	r := cl.Routes()
 	equals(t, 5, len(r))
 }
 
-func TestDinghy_StatusHandler(t *testing.T) {
-	din := newDinghy(t)
-	handler := din.StatusHandler()
+func TestCluster_StatusHandler(t *testing.T) {
+	cl := newCluster(t)
+	handler := cl.StatusHandler()
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", din.routePrefix+RouteStatus, nil)
+	req, _ := http.NewRequest("POST", cl.routePrefix+RouteStatus, nil)
 	handler(w, req)
 	equals(t, http.StatusMethodNotAllowed, w.Code)
 
 	w = httptest.NewRecorder()
-	req = httptest.NewRequest("GET", din.routePrefix+RouteStatus, nil)
+	req = httptest.NewRequest("GET", cl.routePrefix+RouteStatus, nil)
 	handler(w, req)
 
 	equals(t, http.StatusOK, w.Code)
@@ -39,21 +41,21 @@ func TestDinghy_StatusHandler(t *testing.T) {
 	}
 	var got Status
 	json.Unmarshal(w.Body.Bytes(), &got)
-	equals(t, want, got)
+	equals(t, true, cmp.Equal(want, got, cmpopts.IgnoreFields(Status{}, "ID")))
 }
 
-func TestDinghy_StepDownHandler(t *testing.T) {
-	din := newDinghy(t)
-	din.State.State(StateLeader)
-	handler := din.StepDownHandler()
+func TestCluster_StepDownHandler(t *testing.T) {
+	cl := newCluster(t)
+	cl.State.State(StateLeader)
+	handler := cl.StepDownHandler()
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", din.routePrefix+RouteStepDown, nil)
+	req, _ := http.NewRequest("GET", cl.routePrefix+RouteStepDown, nil)
 	handler(w, req)
 	equals(t, http.StatusMethodNotAllowed, w.Code)
 
 	w = httptest.NewRecorder()
-	req = httptest.NewRequest("PUT", din.routePrefix+RouteStepDown, nil)
+	req = httptest.NewRequest("PUT", cl.routePrefix+RouteStepDown, nil)
 	handler(w, req)
 
 	equals(t, http.StatusOK, w.Code)
@@ -66,28 +68,28 @@ func TestDinghy_StepDownHandler(t *testing.T) {
 	}
 	var got Status
 	json.Unmarshal(w.Body.Bytes(), &got)
-	equals(t, want, got)
+	equals(t, true, cmp.Equal(want, got, cmpopts.IgnoreFields(Status{}, "ID")))
 }
 
-func TestDinghy_IDHandler(t *testing.T) {
-	din := newDinghy(t)
-	idHandler := din.IDHandler()
+func TestCluster_IDHandler(t *testing.T) {
+	cl := newCluster(t)
+	idHandler := cl.IDHandler()
 
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", din.routePrefix+RouteID, nil)
+	req, _ := http.NewRequest("POST", cl.routePrefix+RouteID, nil)
 	idHandler(w, req)
 	equals(t, http.StatusMethodNotAllowed, w.Code)
 
 	w = httptest.NewRecorder()
-	req = httptest.NewRequest("GET", din.routePrefix+RouteID, nil)
+	req = httptest.NewRequest("GET", cl.routePrefix+RouteID, nil)
 	idHandler(w, req)
 	equals(t, http.StatusOK, w.Code)
-	equals(t, strconv.Itoa(din.State.ID())+"\n", w.Body.String())
+	equals(t, strconv.Itoa(int(cl.State.ID()))+"\n", w.Body.String())
 }
 
-func TestDinghy_RequestVoteHandler(t *testing.T) {
-	din := newDinghy(t)
-	rvHandler := din.RequestVoteHandler()
+func TestCluster_RequestVoteHandler(t *testing.T) {
+	cl := newCluster(t)
+	rvHandler := cl.RequestVoteHandler()
 
 	tests := []struct {
 		name          string
@@ -99,10 +101,10 @@ func TestDinghy_RequestVoteHandler(t *testing.T) {
 		endState      int
 		startTerm     int
 		endTerm       int
-		startVotedFor int
-		endVotedFor   int
-		startLeaderID int
-		endLeaderID   int
+		startVotedFor uint32
+		endVotedFor   uint32
+		startLeaderID uint32
+		endLeaderID   uint32
 	}{
 		{
 			name:          "00 method not allowed",
@@ -123,12 +125,14 @@ func TestDinghy_RequestVoteHandler(t *testing.T) {
 			name:   "01 ok",
 			method: "POST",
 			req: &requestVoteRequest{
-				Term:        din.State.Term(),
-				CandidateID: din.State.ID(),
+				Term:        cl.State.Term(),
+				CandidateID: cl.State.ID(),
+				NodeID:      cl.State.ID(),
 			},
 			resp: &requestVoteResponse{
-				Term:        din.State.Term(),
+				Term:        cl.State.Term(),
 				VoteGranted: true,
+				NodeID:      cl.State.ID(),
 			},
 			statusCode:    http.StatusOK,
 			startState:    StateFollower,
@@ -136,7 +140,7 @@ func TestDinghy_RequestVoteHandler(t *testing.T) {
 			startTerm:     1,
 			endTerm:       1,
 			startVotedFor: NoVote,
-			endVotedFor:   din.State.ID(),
+			endVotedFor:   cl.State.ID(),
 			startLeaderID: UnknownLeaderID,
 			endLeaderID:   UnknownLeaderID,
 		},
@@ -144,13 +148,15 @@ func TestDinghy_RequestVoteHandler(t *testing.T) {
 			name:   "02 request from an old term so rejected",
 			method: "POST",
 			req: &requestVoteRequest{
-				Term:        din.State.Term() - 1,
-				CandidateID: din.State.ID(),
+				Term:        cl.State.Term() - 1,
+				CandidateID: cl.State.ID(),
+				NodeID:      cl.State.ID(),
 			},
 			resp: &requestVoteResponse{
-				Term:        din.State.Term(),
+				Term:        cl.State.Term(),
 				VoteGranted: false,
 				Reason:      "term 0 < 1",
+				NodeID:      cl.State.ID(),
 			},
 			statusCode:    http.StatusOK,
 			startState:    StateFollower,
@@ -166,13 +172,15 @@ func TestDinghy_RequestVoteHandler(t *testing.T) {
 			name:   "03 request from an old term so rejected already leader",
 			method: "POST",
 			req: &requestVoteRequest{
-				Term:        din.State.Term() - 1,
-				CandidateID: din.State.ID(),
+				Term:        cl.State.Term() - 1,
+				CandidateID: cl.State.ID(),
+				NodeID:      cl.State.ID(),
 			},
 			resp: &requestVoteResponse{
-				Term:        din.State.Term(),
+				Term:        cl.State.Term(),
 				VoteGranted: false,
 				Reason:      "already leader",
+				NodeID:      cl.State.ID(),
 			},
 			statusCode:    http.StatusOK,
 			startState:    StateLeader,
@@ -181,86 +189,91 @@ func TestDinghy_RequestVoteHandler(t *testing.T) {
 			endTerm:       1,
 			startVotedFor: NoVote,
 			endVotedFor:   NoVote,
-			startLeaderID: din.State.ID(),
-			endLeaderID:   din.State.ID(),
+			startLeaderID: cl.State.ID(),
+			endLeaderID:   cl.State.ID(),
 		},
 		{
 			name:   "04 double vote",
 			method: "POST",
 			req: &requestVoteRequest{
-				Term:        din.State.Term(),
-				CandidateID: din.State.ID() + 1,
+				Term:        cl.State.Term(),
+				CandidateID: cl.State.ID() + 1,
+				NodeID:      cl.State.ID(),
 			},
 			resp: &requestVoteResponse{
-				Term:        din.State.Term(),
+				Term:        cl.State.Term(),
 				VoteGranted: false,
-				Reason:      fmt.Sprintf("already cast vote for %d", din.State.ID()),
+				Reason:      fmt.Sprintf("already cast vote for %d", cl.State.ID()),
+				NodeID:      cl.State.ID(),
 			},
 			statusCode:    http.StatusOK,
 			startState:    StateFollower,
 			endState:      StateFollower,
 			startTerm:     1,
 			endTerm:       1,
-			startVotedFor: din.State.ID(),
-			endVotedFor:   din.State.ID(),
-			startLeaderID: din.State.ID(),
-			endLeaderID:   din.State.ID(),
+			startVotedFor: cl.State.ID(),
+			endVotedFor:   cl.State.ID(),
+			startLeaderID: cl.State.ID(),
+			endLeaderID:   cl.State.ID(),
 		},
 		{
 			name:   "04 newer term",
 			method: "POST",
 			req: &requestVoteRequest{
-				Term:        din.State.Term() + 1,
-				CandidateID: din.State.ID(),
+				Term:        cl.State.Term() + 1,
+				CandidateID: cl.State.ID(),
+				NodeID:      cl.State.ID(),
 			},
 			resp: &requestVoteResponse{
 				Term:        2,
 				VoteGranted: true,
+				NodeID:      cl.State.ID(),
 			},
 			statusCode:    http.StatusOK,
 			startState:    StateFollower,
 			endState:      StateFollower,
 			startTerm:     1,
 			endTerm:       2,
-			startVotedFor: din.State.ID(),
-			endVotedFor:   din.State.ID(),
+			startVotedFor: cl.State.ID(),
+			endVotedFor:   cl.State.ID(),
 			startLeaderID: UnknownLeaderID,
 			endLeaderID:   UnknownLeaderID,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			din.State.State(tt.startState)
-			din.State.Term(tt.startTerm)
-			din.State.VotedFor(tt.startVotedFor)
-			din.State.LeaderID(tt.startLeaderID)
+			cl.State.State(tt.startState)
+			cl.State.Term(tt.startTerm)
+			cl.State.VotedFor(tt.startVotedFor)
+			cl.State.LeaderID(tt.startLeaderID)
 			w := httptest.NewRecorder()
 			var req *http.Request
 			var body *bytes.Buffer
 			if tt.req != nil {
 				b, _ := json.Marshal(tt.req)
 				body = bytes.NewBuffer(b)
-				req = httptest.NewRequest(tt.method, din.routePrefix+RouteRequestVote, body)
+				req = httptest.NewRequest(tt.method, cl.routePrefix+RouteRequestVote, body)
 			} else {
-				req = httptest.NewRequest(tt.method, din.routePrefix+RouteRequestVote, nil)
+				req = httptest.NewRequest(tt.method, cl.routePrefix+RouteRequestVote, nil)
 			}
 			rvHandler(w, req)
 			equals(t, tt.statusCode, w.Code)
 			if tt.resp != nil {
-				want, _ := json.Marshal(tt.resp)
-				equals(t, string(want)+"\n", w.Body.String())
+				var got requestVoteResponse
+				json.Unmarshal(w.Body.Bytes(), &got)
+				equals(t, *tt.resp, got)
 			}
-			equals(t, din.State.StateString(tt.endState), din.State.StateString(din.State.State()))
-			equals(t, tt.endTerm, din.State.Term())
-			equals(t, tt.endVotedFor, din.State.VotedFor())
-			equals(t, tt.endLeaderID, din.State.LeaderID())
+			equals(t, cl.State.StateString(tt.endState), cl.State.StateString(cl.State.State()))
+			equals(t, tt.endTerm, cl.State.Term())
+			equals(t, tt.endVotedFor, cl.State.VotedFor())
+			equals(t, tt.endLeaderID, cl.State.LeaderID())
 		})
 	}
 }
 
-func TestDinghy_AppendEntriesHandler(t *testing.T) {
-	din := newDinghy(t)
-	aeHandler := din.AppendEntriesHandler()
+func TestCluster_AppendEntriesHandler(t *testing.T) {
+	cl := newCluster(t)
+	aeHandler := cl.AppendEntriesHandler()
 
 	tests := []struct {
 		name          string
@@ -272,10 +285,10 @@ func TestDinghy_AppendEntriesHandler(t *testing.T) {
 		endState      int
 		startTerm     int
 		endTerm       int
-		startVotedFor int
-		endVotedFor   int
-		startLeaderID int
-		endLeaderID   int
+		startVotedFor uint32
+		endVotedFor   uint32
+		startLeaderID uint32
+		endLeaderID   uint32
 	}{
 		{
 			name:          "00 method not allowed",
@@ -296,11 +309,11 @@ func TestDinghy_AppendEntriesHandler(t *testing.T) {
 			name:   "01 request from an old term so rejected",
 			method: "POST",
 			req: &AppendEntriesRequest{
-				Term:     din.State.Term() - 1,
-				LeaderID: din.State.ID(),
+				Term:     cl.State.Term() - 1,
+				LeaderID: cl.State.ID(),
 			},
 			wantResp: &appendEntriesResponse{
-				Term:    din.State.Term(),
+				Term:    cl.State.Term(),
 				Success: false,
 				Reason:  "term 0 < 1",
 			},
@@ -318,7 +331,7 @@ func TestDinghy_AppendEntriesHandler(t *testing.T) {
 			name:   "02 request from a newer term so step down",
 			method: "POST",
 			req: &AppendEntriesRequest{
-				Term:     din.State.Term() + 1,
+				Term:     cl.State.Term() + 1,
 				LeaderID: 999,
 			},
 			wantResp: &appendEntriesResponse{
@@ -359,19 +372,19 @@ func TestDinghy_AppendEntriesHandler(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			din.State.State(tt.startState)
-			din.State.Term(tt.startTerm)
-			din.State.VotedFor(tt.startVotedFor)
-			din.State.LeaderID(tt.startLeaderID)
+			cl.State.State(tt.startState)
+			cl.State.Term(tt.startTerm)
+			cl.State.VotedFor(tt.startVotedFor)
+			cl.State.LeaderID(tt.startLeaderID)
 			w := httptest.NewRecorder()
 			var req *http.Request
 			var body *bytes.Buffer
 			if tt.req != nil {
 				b, _ := json.Marshal(tt.req)
 				body = bytes.NewBuffer(b)
-				req = httptest.NewRequest(tt.method, din.routePrefix+RouteAppendEntries, body)
+				req = httptest.NewRequest(tt.method, cl.routePrefix+RouteAppendEntries, body)
 			} else {
-				req = httptest.NewRequest(tt.method, din.routePrefix+RouteAppendEntries, nil)
+				req = httptest.NewRequest(tt.method, cl.routePrefix+RouteAppendEntries, nil)
 			}
 			aeHandler(w, req)
 			equals(t, tt.statusCode, w.Code)
@@ -379,10 +392,10 @@ func TestDinghy_AppendEntriesHandler(t *testing.T) {
 				want, _ := json.Marshal(tt.wantResp)
 				equals(t, string(want)+"\n", w.Body.String())
 			}
-			equals(t, din.State.StateString(tt.endState), din.State.StateString(din.State.State()))
-			equals(t, tt.endTerm, din.State.Term())
-			equals(t, tt.endVotedFor, din.State.VotedFor())
-			equals(t, tt.endLeaderID, din.State.LeaderID())
+			equals(t, cl.State.StateString(tt.endState), cl.State.StateString(cl.State.State()))
+			equals(t, tt.endTerm, cl.State.Term())
+			equals(t, tt.endVotedFor, cl.State.VotedFor())
+			equals(t, tt.endLeaderID, cl.State.LeaderID())
 		})
 	}
 }

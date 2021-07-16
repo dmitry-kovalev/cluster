@@ -1,15 +1,15 @@
-package dinghy
+package cluster
 
 import "testing"
 
 func TestNewState(t *testing.T) {
 	type args struct {
-		id int
+		id uint32
 	}
 	tests := []struct {
 		name   string
 		args   args
-		wantID int
+		wantID uint32
 	}{
 		{"00", args{1}, 1},
 		{"00", args{123}, 123},
@@ -27,7 +27,7 @@ func TestState_ID(t *testing.T) {
 	tests := []struct {
 		name  string
 		state *State
-		want  int
+		want  uint32
 	}{
 		{"00", NewState(1, 0, 0), 1},
 		{"01", NewState(123, 0, 0), 123},
@@ -43,7 +43,7 @@ func TestState_LeaderID(t *testing.T) {
 	s := NewState(1, 0, 0)
 	equals(t, UnknownLeaderID, s.LeaderID())
 	s.LeaderID(33)
-	equals(t, 33, s.LeaderID())
+	equals(t, uint32(33), s.LeaderID())
 }
 
 func TestState_State(t *testing.T) {
@@ -66,7 +66,7 @@ func TestState_VotedFor(t *testing.T) {
 	s := NewState(1, 0, 0)
 	equals(t, NoVote, s.VotedFor())
 	s.VotedFor(33)
-	equals(t, 33, s.VotedFor())
+	equals(t, uint32(33), s.VotedFor())
 }
 
 func TestState_StepDown(t *testing.T) {
