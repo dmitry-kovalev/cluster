@@ -41,7 +41,9 @@ func TestCluster_StatusHandler(t *testing.T) {
 	}
 	var got Status
 	json.Unmarshal(w.Body.Bytes(), &got)
-	equals(t, true, cmp.Equal(want, got, cmpopts.IgnoreFields(Status{}, "ID")))
+	if !cmp.Equal(want, got, cmpopts.IgnoreFields(Status{}, "ID")) {
+		t.Errorf("StatusHandler() = %v, want %v", got, want)
+	}
 }
 
 func TestCluster_StepDownHandler(t *testing.T) {
@@ -68,7 +70,9 @@ func TestCluster_StepDownHandler(t *testing.T) {
 	}
 	var got Status
 	json.Unmarshal(w.Body.Bytes(), &got)
-	equals(t, true, cmp.Equal(want, got, cmpopts.IgnoreFields(Status{}, "ID")))
+	if !cmp.Equal(want, got, cmpopts.IgnoreFields(Status{}, "ID")) {
+		t.Errorf("StepDownHandler() = %v, want %v", got, want)
+	}
 }
 
 func TestCluster_IDHandler(t *testing.T) {
