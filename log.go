@@ -11,6 +11,7 @@ type Logger interface {
 	Println(v ...interface{})
 	Infof(format string, v ...interface{})
 	Debugf(format string, v ...interface{})
+	Tracef(format string, v ...interface{})
 	Errorf(format string, v ...interface{})
 	Errorln(v ...interface{})
 }
@@ -30,6 +31,9 @@ func (d *DiscardLogger) Infof(format string, v ...interface{}) {}
 
 // Debugf noop
 func (d *DiscardLogger) Debugf(format string, v ...interface{}) {}
+
+// Tracef noop
+func (d *DiscardLogger) Tracef(format string, v ...interface{}) {}
 
 // Errorln noop
 func (d *DiscardLogger) Errorln(v ...interface{}) {}
@@ -60,6 +64,11 @@ func (d *LogLogger) Infof(format string, v ...interface{}) {
 // Debugf std lib
 func (d *LogLogger) Debugf(format string, v ...interface{}) {
 	d.Logger.Output(3, fmt.Sprintf("[DEBU] "+format, v...))
+}
+
+// Debugf std lib
+func (d *LogLogger) Tracef(format string, v ...interface{}) {
+	d.Logger.Output(3, fmt.Sprintf("[TRAC] "+format, v...))
 }
 
 // Errorln std lib

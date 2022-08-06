@@ -149,7 +149,7 @@ LOOP:
 			c.logger.Infof("Heartbeat reset")
 			continue LOOP
 		case aer := <-c.State.AppendEntriesEvent():
-			c.logger.Debugf(" %v got AppendEntries from leader %v", c.State.StateString(c.State.State()), aer)
+			c.logger.Tracef(" %v got AppendEntries from leader %v", c.State.StateString(c.State.State()), aer)
 			continue LOOP
 		case <-c.State.HeartbeatTickRandom():
 			// https://raft.github.io/raft.pdf
@@ -265,7 +265,7 @@ func (c *Cluster) leader() error {
 			c.logger.Infof("Leader state changed to %s", c.State.StateString(newState))
 			return nil
 		case h := <-c.State.HeartbeatTick():
-			c.logger.Debugf("Sending to peers AppendEntriesRequest %v %v", c.Nodes, h)
+			c.logger.Tracef("Sending to peers AppendEntriesRequest %v %v", c.Nodes, h)
 			currentTerm, err := c.AppendEntriesRequest()
 			if err != nil {
 				c.logger.Errorf("Executing AppendEntriesRequest: %v", err)
